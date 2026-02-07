@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Any, Dict, List
 from datetime import datetime
 import json
+import logging
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound, TemplateError
+
+logger = logging.getLogger(__name__)
 
 
 class Reporter:
@@ -78,12 +81,14 @@ class Reporter:
         elif self.output_format == "markdown":
             content = self._generate_markdown(scan_results, target_url)
         elif self.output_format == "sarif":
-            content = self._generate_sarif(scan_results, target_url)
-            # Also generate minimal results.json for the CI script
-            # The CI script expects report.critical, report.high etc.
-
             # Recalculate summary to get flat counts
             vulns = self._validate_vulnerability_data(scan_results)
+            
+            # Pass validated vulns to sarif generator to avoid double validation
+            content = self._generate_sarif_from_vulns(vulns, target_url)
+            
+            # Also generate minimal results.json for the CI script
+            # The CI script expects report.critical, report.high etc.
             summary = self._calculate_executive_summary(vulns)
             counts = summary["severity_breakdown"]
 
@@ -235,7 +240,7 @@ class Reporter:
                 while vuln_id in used_ids:
                     vuln_id = f"{original_id}_{counter}"
                     counter += 1
-                print(
+                logger.warning(
                     f"Warning: Duplicate vulnerability ID '{original_id}' found, using '{vuln_id}' instead"
                 )
 
@@ -245,7 +250,7 @@ class Reporter:
             # Validate severity level
             valid_severities = ["critical", "high", "medium", "low"]
             if validated_vuln["severity"].lower() not in valid_severities:
-                print(
+                logger.warning(
                     f"Warning: Invalid severity '{validated_vuln['severity']}' for vulnerability {i}, defaulting to 'medium'"
                 )
                 validated_vuln["severity"] = "medium"
@@ -424,7 +429,7 @@ class Reporter:
                 "endpoints": [  # Mock endpoint data for template
                     {
                         "method": vuln.get("method", "GET"),
-                        "path": vuln.get("endpoint", "/unknown"),
+                        "path": vuln.get("endpoint") or "/unknown",
                         "status": "Tested",
                     }
                     for vuln in vulnerabilities
@@ -487,7 +492,21 @@ class Reporter:
         """
         try:
             vulnerabilities = self._validate_vulnerability_data(results)
+            return self._generate_sarif_from_vulns(vulnerabilities, target)
+        except Exception as e:
+            raise ValueError(f"Failed to generate SARIF report: {e}") from e
 
+    def _generate_sarif_from_vulns(self, vulnerabilities: list[dict[str, Any]], target: str) -> str:
+        """Generate SARIF report from validated vulnerabilities.
+
+        Args:
+            vulnerabilities: List of validated vulnerability findings
+            target: Target URL that was scanned
+
+        Returns:
+            Generated SARIF report content
+        """
+        try:
             rules = []
             sarif_results = []
             rule_indices = {}
@@ -528,9 +547,8 @@ class Reporter:
                             {
                                 "physicalLocation": {
                                     "artifactLocation": {
-                                        "uri": vuln.get(
-                                            "endpoint", target
-                                        )  # Use endpoint as location or target if missing
+                                        # Use endpoint as location, fallback to target if empty
+                                        "uri": vuln.get("endpoint") or target
                                     }
                                 }
                             }
