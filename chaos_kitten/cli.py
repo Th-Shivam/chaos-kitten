@@ -146,14 +146,56 @@ def scan(
         else:
             console.print("[yellow]⚠️  Proceeding anyway since we are in demo mode...[/yellow]")
     
-    # TODO: Implement actual scanning logic
-    console.print("[yellow]⚠️  Scanning logic is still under construction![/yellow]")
-    console.print(f"I was supposed to scan [bold]{target or 'the API'}[/bold]...")
-    console.print(f"And save the [bold]{format}[/bold] report to [bold]{output}[/bold].")
-    console.print()
-    console.print("🐾 [italic]But for now, I'm just stretching my paws![/italic]")
-    console.print("[dim]The full agentic brain will be integrated soon.[/dim]")
-    console.print()
+
+    # Build configuration
+    app_config = {}
+    
+    # Try to load from file
+    from chaos_kitten.utils.config import Config
+    config_loader = Config(config)
+    try:
+        app_config = config_loader.load()
+    except FileNotFoundError:
+        # It's okay if file doesn't exist AND we provided args
+        if not target and not spec and not demo:
+            console.print(f"[bold red]❌ Config file not found: {config}[/bold red]")
+            console.print("Run 'chaos-kitten init' or provide --target and --spec args.")
+            raise typer.Exit(code=1)
+            
+    # CLI args override config
+    if target:
+        if "target" not in app_config: app_config["target"] = {}
+        app_config["target"]["base_url"] = target
+        # Also support legacy api path for backward compat if needed, but prefer target
+        if "api" not in app_config: app_config["api"] = {}
+        app_config["api"]["base_url"] = target
+        
+    if spec:
+        if "target" not in app_config: app_config["target"] = {}
+        app_config["target"]["openapi_spec"] = spec
+        # Support legacy path
+        if "api" not in app_config: app_config["api"] = {}
+        app_config["api"]["spec_path"] = spec
+        
+    if output:
+        if "reporting" not in app_config: app_config["reporting"] = {}
+        app_config["reporting"]["output_path"] = output
+
+    if format:
+        if "reporting" not in app_config: app_config["reporting"] = {}
+        app_config["reporting"]["format"] = format
+
+    # Run the orchestrator
+    from chaos_kitten.brain.orchestrator import Orchestrator
+    orchestrator = Orchestrator(app_config)
+    try:
+        import asyncio
+        asyncio.run(orchestrator.run())
+    except Exception as e:
+        console.print(f"[bold red]❌ Scan failed:[/bold red] {e}")
+        # import traceback
+        # console.print(traceback.format_exc())
+        raise typer.Exit(code=1)
 
 @app.command()
 def meow():

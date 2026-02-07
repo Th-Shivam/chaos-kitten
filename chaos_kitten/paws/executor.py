@@ -2,6 +2,8 @@
 
 from typing import Any
 import httpx
+import asyncio
+import time
 
 
 class Executor:
@@ -82,5 +84,50 @@ class Executor:
         Returns:
             Response data including status, body, and timing
         """
-        # TODO: Implement attack execution with rate limiting
-        raise NotImplementedError("Attack execution not yet implemented")
+        if not self._client:
+            raise RuntimeError("Executor context not initialized. Use 'async with' block.")
+
+        url = path.lstrip("/")
+        
+        # Rate Limiting
+        if self.rate_limit > 0:
+            await asyncio.sleep(1.0 / self.rate_limit)
+        
+        # Merge headers
+        # Start timing
+        start_time = time.time()
+        
+        try:
+            # Handle different payload types based on method usually, 
+            # but httpx handles 'json' or 'data' or 'params'
+            
+            kwargs = {}
+            if headers:
+                kwargs["headers"] = headers
+            
+            if payload is not None:
+                if method.upper() in ["POST", "PUT", "PATCH"]:
+                    kwargs["json"] = payload
+                else:
+                    kwargs["params"] = payload
+                 
+            response = await self._client.request(method, url, **kwargs)
+            duration = time.time() - start_time
+            
+            return {
+                "status_code": response.status_code,
+                "response_body": response.text,
+                "duration": duration,
+                "headers": dict(response.headers),
+                "url": str(response.url)
+            }
+            
+        except httpx.RequestError as e:
+            duration = time.time() - start_time
+            return {
+                "status_code": 0,
+                "error": str(e),
+                "duration": duration,
+                "response_body": "",
+                "url": url
+            }
