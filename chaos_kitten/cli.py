@@ -200,7 +200,26 @@ def scan(
     orchestrator = Orchestrator(app_config)
     try:
         import asyncio
-        asyncio.run(orchestrator.run())
+        results = asyncio.run(orchestrator.run())
+
+        # Check for orchestrator runtime errors
+        if isinstance(results, dict) and results.get("status") == "failed":
+            console.print(f"[bold red]❌ Scan failed:[/bold red] {results.get('error')}")
+            raise typer.Exit(code=1)
+
+        # Handle --fail-on-critical
+        if fail_on_critical:
+            vulnerabilities = results.get("vulnerabilities", [])
+            critical_vulns = [
+                v for v in vulnerabilities 
+                if str(v.get("severity", "")).lower() == "critical"
+            ]
+            if critical_vulns:
+                console.print(f"[bold red]❌ Found {len(critical_vulns)} critical vulnerabilities. Failing pipeline.[/bold red]")
+                raise typer.Exit(code=1)
+
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[bold red]❌ Scan failed:[/bold red] {e}")
         # import traceback
