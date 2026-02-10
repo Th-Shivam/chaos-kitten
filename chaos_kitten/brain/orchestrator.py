@@ -85,11 +85,22 @@ async def execute_and_analyze(state: AgentState, executor: Executor) -> dict:
             )
             continue
 
+        payload_used = attack.get("payload", "")
+        if isinstance(payload_used, dict):
+            payload_used = next(
+                (v for v in payload_used.values() if isinstance(v, str)),
+                str(payload_used),
+            )
+        elif payload_used is None:
+            payload_used = ""
+        else:
+            payload_used = str(payload_used)
+
         finding = analyzer.analyze(
             response_body=result.get("response_body", ""),
             status_code=result.get("status_code", 0),
             response_time_ms=result.get("elapsed_ms", 0),
-            payload_used=attack.get("payload", ""),
+            payload_used=payload_used,
             endpoint=f"{endpoint.get('method')} {endpoint.get('path')}",
         )
 
