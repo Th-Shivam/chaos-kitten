@@ -1,25 +1,27 @@
 """The Brain Orchestrator - Main agent logic using LangGraph."""
 
+import json
 import logging
-import asyncio
 from functools import partial
-from typing import Any, TypedDict, List, Literal
-from langgraph.graph import START, StateGraph, END
+from typing import Any, Literal, TypedDict
+
+from langgraph.graph import END, START, StateGraph
 from rich.console import Console
 from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
     Progress,
     SpinnerColumn,
     TextColumn,
-    BarColumn,
-    MofNCompleteColumn,
 )
+
+from chaos_kitten.brain.attack_planner import AttackPlanner
 
 # Internal Chaos Kitten imports
 from chaos_kitten.brain.openapi_parser import OpenAPIParser
-from chaos_kitten.brain.attack_planner import AttackPlanner
-from chaos_kitten.paws.executor import Executor
-from chaos_kitten.litterbox.reporter import Reporter
 from chaos_kitten.brain.response_analyzer import ResponseAnalyzer
+from chaos_kitten.litterbox.reporter import Reporter
+from chaos_kitten.paws.executor import Executor
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -28,11 +30,11 @@ console = Console()
 class AgentState(TypedDict):
     spec_path: str
     base_url: str
-    endpoints: List[dict]
+    endpoints: list[dict]
     current_endpoint: int
-    planned_attacks: List[dict]
-    results: List[dict]
-    findings: List[dict]
+    planned_attacks: list[dict]
+    results: list[dict]
+    findings: list[dict]
 
 
 def parse_openapi(state: AgentState) -> dict:
@@ -40,7 +42,7 @@ def parse_openapi(state: AgentState) -> dict:
         parser = OpenAPIParser(state["spec_path"])
         parser.parse()
         endpoints = parser.get_endpoints()
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to parse OpenAPI spec")
         raise
     return {"endpoints": endpoints, "current_endpoint": 0}
@@ -85,16 +87,19 @@ async def execute_and_analyze(state: AgentState, executor: Executor) -> dict:
             )
             continue
 
-        payload_used = attack.get("payload", "")
-        if isinstance(payload_used, dict):
-            payload_used = next(
-                (v for v in payload_used.values() if isinstance(v, str)),
-                str(payload_used),
-            )
-        elif payload_used is None:
+        payload_obj = attack.get("payload")
+        if payload_obj is None:
             payload_used = ""
+        elif isinstance(payload_obj, dict):
+            if len(payload_obj) == 1:
+                only_value = next(iter(payload_obj.values()))
+                payload_used = (
+                    only_value if isinstance(only_value, str) else str(only_value)
+                )
+            else:
+                payload_used = json.dumps(payload_obj, sort_keys=True, default=str)
         else:
-            payload_used = str(payload_used)
+            payload_used = str(payload_obj)
 
         finding = analyzer.analyze(
             response_body=result.get("response_body", ""),
@@ -133,6 +138,7 @@ class Orchestrator:
     4. Analyzes results
     5. Generates reports
     """
+
     def __init__(self, config: dict[str, Any]) -> None:
         self.config = config
 
