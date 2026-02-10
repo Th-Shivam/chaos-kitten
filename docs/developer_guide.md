@@ -122,6 +122,7 @@ The config loader also expands `${VARNAME}` syntax inside `chaos-kitten.yaml` (s
 Note: The CLI does not automatically load a `.env` file. If you prefer `.env`, load it into your shell (for example via `direnv`, your IDE, or your task runner). For a quick local shell setup:
 
 ```bash
+# In bash/zsh:
 set -a
 source .env
 set +a
