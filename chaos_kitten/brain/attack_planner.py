@@ -1,8 +1,17 @@
 """Attack Planner - Uses Chain-of-Thought reasoning to plan attacks."""
 
 from typing import Any
-
-
+import logging
+import json
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
+from langchain_community.chat_models import ChatOllama
+from langchain.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+logger=logging.getLogger(__name__)
+ATTACK_PLANNING_PROMPT =""
+PAYLOAD_SUGGESTION_PROMPT=""
+REASONING_PROMPT = ""
 class AttackPlanner:
     """Plan attacks based on API structure and context.
     
@@ -13,7 +22,7 @@ class AttackPlanner:
     - Adapt based on responses
     """
     
-    def __init__(self, endpoints: list[dict[str, Any]], toys_path: str = "toys/") -> None:
+    def __init__(self, endpoints: list[dict[str, Any]], toys_path: str = "toys/",llm_provider: str = "anthropic",model: str = "claude-3-5-sonnet-20241022",temperature: float = 0.7) -> None:
         """Initialize the attack planner.
         
         Args:
@@ -23,7 +32,22 @@ class AttackPlanner:
         self.endpoints = endpoints
         self.toys_path = toys_path
         self.attack_profiles: list[dict[str, Any]] = []
-    
+
+        self.llm_provider=llm_provider.lower()
+        self.model=model
+        self.temperature=temperature
+        self.llm=self._init_llm()
+
+    def _init_llm(self)->Any:
+        if self.llm_provider=='anthropic':
+            return ChatAnthropic(model="claude-3-5-sonnet-20241022",temperature=self.temperature)
+        elif self.llm_provider=='openai':
+            return ChatOpenAI(model="gpt-5",temperature=self.temperature)
+        elif self.llm_provider == "ollama":
+            return ChatOllama(model="llama3.1", temperature=self.temperature)
+        else:
+            logger.warning(f"Unknown LLM provider {self.llm_provider}. Falling back to Claude.")
+            return ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=self.temperature)
     def load_attack_profiles(self) -> None:
         """Load all attack profiles from the toys directory."""
         # TODO: Load YAML files from toys/
@@ -40,14 +64,35 @@ class AttackPlanner:
             List of planned attacks with payloads and expected behaviors
         """
         # MVP: Simple rule-based stub
-        attacks = []
+        
         path = endpoint.get("path", "")
         method = endpoint.get("method", "GET")
-        
-        # Simple heuristic: If it takes parameters, try SQL injection
         params = endpoint.get("parameters", [])
         body = endpoint.get("requestBody", {})
+        cache_key = f"{method}:{path}:{str(params)}:{str(body)}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
         
+        prompt = ChatPromptTemplate.from_template(ATTACK_PLANNING_PROMPT)
+        parser=JsonOutputParser()
+        chain = prompt | self.llm | parser
+        try:
+            attacks = chain.invoke({
+                "method": method,
+                "path": path,
+                "parameters": json.dumps(params),
+                "body": json.dumps(body)
+            })
+            if isinstance(attacks, list):
+                priority_map = {"high": 0, "medium": 1, "low": 2}
+                attacks.sort(key=lambda x: priority_map.get(str(x.get("priority", "low")).lower(), 3))
+                
+                self._cache[cache_key] = attacks
+                return attacks
+        except Exception as e:
+            logger.warning(f"LLM attack planning failed: {e}. Falling back to rule-based.")
+
+        attacks = []
         if params or body:
             attacks.append({
                 "type": "sql_injection",
@@ -57,9 +102,25 @@ class AttackPlanner:
                 "target_param": "q" if params else "body",
                 "expected_status": 500
             })
-            
+        self._cache[cache_key] = attacks  
         return attacks
-    
+    def suggest_payloads(self, attack_type: str, context: dict[str, Any]) -> list[str]:
+        """Generate context-specific payloads using LLM intelligence."""
+        prompt = ChatPromptTemplate.from_template(PAYLOAD_SUGGESTION_PROMPT)
+        chain = prompt | self.llm | JsonOutputParser()
+        
+        try:
+            payloads = chain.invoke({
+                "attack_type": attack_type,
+                "context": json.dumps(context)
+            })
+            if isinstance(payloads, list):
+                return payloads
+        except Exception as e:
+            logger.warning(f"LLM payload suggestion failed: {e}")
+            
+        # fallback
+        return ["' OR 1=1 --", "<script>alert(1)</script>", "../../../etc/passwd"]
     def reason_about_field(self, field_name: str, field_type: str) -> str:
         """Use LLM to reason about potential vulnerabilities for a field.
         
@@ -72,7 +133,17 @@ class AttackPlanner:
             field_type: Data type of the field
             
         Returns:
-            Reasoning about what to test
-        """
-        # TODO: Implement LLM reasoning
-        raise NotImplementedError("Field reasoning not yet implemented")
+            Reasoning about what to test"""
+        
+        prompt = ChatPromptTemplate.from_template(REASONING_PROMPT)
+        chain = prompt | self.llm
+        
+        try:
+            response = chain.invoke({
+                "field_name": field_name,
+                "field_type": field_type
+            })
+            return response.content
+        except Exception as e:
+            logger.warning(f"LLM field reasoning failed: {e}")
+            return f"Test '{field_name}' of type '{field_type}' with boundary values and injection strings."
