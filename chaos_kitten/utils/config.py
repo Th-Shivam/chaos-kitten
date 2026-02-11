@@ -37,6 +37,12 @@ class Config:
         with open(self.config_path) as f:
             self._config = yaml.safe_load(f)
         
+        if self._config is None:
+            self._config = {}
+            
+        if not isinstance(self._config, dict):
+            raise ValueError("Configuration root must be a mapping/object")
+        
         # Expand environment variables
         self._expand_env_vars(self._config)
         

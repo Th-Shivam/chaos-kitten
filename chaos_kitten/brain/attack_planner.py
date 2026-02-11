@@ -50,48 +50,9 @@ class AttackPlanner:
     
     def load_attack_profiles(self) -> None:
         """Load all attack profiles from the toys directory."""
-        search_path = os.path.join(self.toys_path, "*.yaml")
-        yaml_files = glob.glob(search_path)
-        
-        if not yaml_files:
-            logger.warning(f"No attack profiles found in {self.toys_path}")
-            return
-
-        for file_path in yaml_files:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f)
-                
-                if not data:
-                    logger.warning(f"Skipping empty file: {file_path}")
-                    continue
-                    
-                # Basic validation of required fields
-                required_fields = ["name", "category", "severity", "payloads", "target_fields"]
-                missing = [field for field in required_fields if field not in data]
-                
-                if missing:
-                    logger.warning(f"Skipping {file_path}: Missing required fields {missing}")
-                    continue
-
-                profile = AttackProfile(
-                    name=data["name"],
-                    category=data["category"],
-                    severity=data["severity"],
-                    description=data.get("description", ""),
-                    payloads=data["payloads"],
-                    target_fields=data["target_fields"],
-                    success_indicators=data.get("success_indicators", {}),
-                    remediation=data.get("remediation", ""),
-                    references=data.get("references", [])
-                )
-                self.attack_profiles.append(profile)
-                logger.debug(f"Loaded attack profile: {profile.name}")
-                
-            except Exception as e:
-                logger.error(f"Failed to load attack profile from {file_path}: {e}")
-        
-        logger.info(f"Loaded {len(self.attack_profiles)} attack profiles")
+        # TODO: Load YAML files from toys/
+        # raise NotImplementedError("Attack profile loading not yet implemented")
+        pass
     
     def plan_attacks(self, endpoint: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Plan attacks for a specific endpoint.
@@ -122,86 +83,26 @@ class AttackPlanner:
                 ...
             ]
         """
-        planned_attacks = []
+        # MVP: Simple rule-based stub
+        attacks = []
+        path = endpoint.get("path", "")
+        method = endpoint.get("method", "GET")
         
-        if not self.attack_profiles:
-            self.load_attack_profiles()
+        # Simple heuristic: If it takes parameters, try SQL injection
+        params = endpoint.get("parameters", [])
+        body = endpoint.get("requestBody", {})
+        
+        if params or body:
+            attacks.append({
+                "type": "sql_injection",
+                "name": "Basic SQLi Probe",
+                "description": "Injects a basic SQL payload to test for errors",
+                "payload": {"q": "' OR 1=1 --"}, # Simplified payload assumption
+                "target_param": "q" if params else "body",
+                "expected_status": 500
+            })
             
-        endpoint_path = endpoint.get("path", "")
-        method = endpoint.get("method", "").lower()
-        
-        # Collect potential target fields from the endpoint definition
-        targetable_fields = [] # (name, location, type)
-        
-        # 1. Check parameters (query, path, header, cookie)
-        for param in endpoint.get("parameters", []):
-            p_name = param.get("name")
-            p_in = param.get("in")
-            p_schema = param.get("schema", {})
-            p_type = p_schema.get("type", "string")
-            if p_name:
-                targetable_fields.append({"name": p_name, "location": p_in, "type": p_type})
-                
-        # 2. Check request body
-        # 2. Check request body
-        request_body = endpoint.get("requestBody") or {}
-        content = request_body.get("content", {})
-        for content_type, media_type in content.items():
-            schema = media_type.get("schema", {})
-            properties = schema.get("properties", {})
-            for prop_name, prop_details in properties.items():
-                p_type = prop_details.get("type", "string")
-                targetable_fields.append({"name": prop_name, "location": "body", "type": p_type})
-
-        # Iterate through loaded profiles and find matches
-        for profile in self.attack_profiles:
-            # Simple heuristic: matching Method semantics
-            # Injection attacks usually on POST/PUT body or GET query params
-            # This is a simplification; a real scanner would be more comprehensive.
-            
-            for field_info in targetable_fields:
-                field_name = field_info["name"]
-                field_type = field_info["type"]
-                
-                # Check 1: Field name match (Exact or Fuzzy)
-                # Exact match
-                is_match = field_name in profile.target_fields
-                
-                # Fuzzy match (e.g., "user_email" matches "email")
-                if not is_match:
-                    for target in profile.target_fields:
-                        if target in field_name.lower() or field_name.lower() in target:
-                            is_match = True
-                            break
-                            
-                if is_match:
-                    # Check 2: Type compatibility (Basic)
-                    # Use categories to determine if type mismatch is critical
-                    # e.g., SQLi (string) vs ID (integer) - sometimes valid, sometimes not.
-                    # For now, we'll be permissive but prioritize string fields for injections.
-                    
-                    # Logic for filtering based on method/category
-                    # e.g. Don't test body interactions on GET requests unless strictly specific
-                    if field_info["location"] == "body" and method == "get":
-                        continue
-                        
-                    attack_plan = {
-                        "profile_name": profile.name,
-                        "endpoint": endpoint_path,
-                        "method": method,
-                        "field": field_name,
-                        "location": field_info["location"],
-                        "payloads": profile.payloads,
-                        "expected_indicators": profile.success_indicators,
-                        "severity": profile.severity
-                    }
-                    planned_attacks.append(attack_plan)
-
-        # Prioritize by severity
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-        planned_attacks.sort(key=lambda x: severity_order.get(x["severity"].lower(), 99))
-        
-        return planned_attacks
+        return attacks
     
     def reason_about_field(self, field_name: str, field_type: str) -> str:
         """Use LLM to reason about potential vulnerabilities for a field.
