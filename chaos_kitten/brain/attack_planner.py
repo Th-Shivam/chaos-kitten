@@ -86,7 +86,7 @@ class AttackPlanner:
         self.llm_provider=llm_provider.lower()
         self.temperature=temperature
         self.llm=self._init_llm()
-
+        self.load_attack_profiles()
     def _init_llm(self)->Any:
         if self.llm_provider=='anthropic':
             return ChatAnthropic(model="claude-3-5-sonnet-20241022",temperature=self.temperature)
@@ -97,12 +97,7 @@ class AttackPlanner:
         else:
             logger.warning(f"Unknown LLM provider {self.llm_provider}. Falling back to Claude.")
             return ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=self.temperature)
-        self.attack_profiles: List[AttackProfile] = []
         
-        # Configure logging if not already configured
-        # Note: Library code should generally not call basicConfig().
-        # Leaving this to the application entry point.
-        pass
     
     def load_attack_profiles(self) -> None:
         """Load all attack profiles from the toys directory."""
@@ -191,32 +186,63 @@ class AttackPlanner:
         prompt = ChatPromptTemplate.from_template(ATTACK_PLANNING_PROMPT)
         parser=JsonOutputParser()
         chain = prompt | self.llm | parser
+        attacks = []
+        
+        # 1. Attempt LLM Planning
         try:
-            attacks = chain.invoke({
+            prompt = ChatPromptTemplate.from_template(ATTACK_PLANNING_PROMPT)
+            parser = JsonOutputParser()
+            chain = prompt | self.llm | parser
+            
+            generated_attacks = chain.invoke({
                 "method": method,
                 "path": path,
                 "parameters": json.dumps(params),
                 "body": json.dumps(body)
             })
-            if isinstance(attacks, list):
+            
+            if isinstance(generated_attacks, list):
                 priority_map = {"high": 0, "medium": 1, "low": 2}
-                attacks.sort(key=lambda x: priority_map.get(str(x.get("priority", "low")).lower(), 3))
+                generated_attacks.sort(key=lambda x: priority_map.get(str(x.get("priority", "low")).lower(), 3))
+                attacks = generated_attacks
+                logger.info(f"LLM generated {len(attacks)} attack vectors for {method} {path}")
                 
-                self._cache[cache_key] = attacks
-                return attacks
         except Exception as e:
-            logger.warning(f"LLM attack planning failed: {e}. Falling back to rule-based.")
+            logger.warning(f"LLM attack planning failed for {path}: {str(e)}. Falling back to rule-based profiles.")
+            
+            if not self.attack_profiles:
+                target = "q" if params else "body"
+                attacks.append({
+                    "type": "sql_injection",
+                    "name": "Fallback SQLi Probe",
+                    "description": "Basic SQL injection test (No profiles loaded)",
+                    "payload": {target: "' OR 1=1 --"},
+                    "target_param": target,
+                    "expected_status": 500,
+                    "priority": "high"
+                })
+            else:
+                param_names = [p.get("name") for p in params if isinstance(p, dict)]
+                
+                for profile in self.attack_profiles:
+                    payload_target = None
+                    
+                    if params and "query" in profile.target_fields:
+                        payload_target = param_names[0] if param_names else "q"
+                    elif body and "body" in profile.target_fields:
+                        payload_target = "body"
+                        
+                    if payload_target:
+                        attacks.append({
+                            "type": profile.category,
+                            "name": profile.name,
+                            "description": profile.description,
+                            "payload": {payload_target: profile.payloads[0] if profile.payloads else "TEST"},
+                            "target_param": payload_target,
+                            "expected_status": 400,
+                            "priority": profile.severity
+                        })
 
-        attacks = []
-        if params or body:
-            attacks.append({
-                "type": "sql_injection",
-                "name": "Basic SQLi Probe",
-                "description": "Injects a basic SQL payload to test for errors",
-                "payload": {"q": "' OR 1=1 --"}, # Simplified payload assumption
-                "target_param": "q" if params else "body",
-                "expected_status": 500
-            })
         self._cache[cache_key] = attacks  
         return attacks
     def suggest_payloads(self, attack_type: str, context: dict[str, Any]) -> list[str]:
