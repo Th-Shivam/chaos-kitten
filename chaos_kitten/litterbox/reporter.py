@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import logging
 from jinja2 import Environment, FileSystemLoader, TemplateNotFound, TemplateError
+from chaos_kitten import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -362,7 +363,7 @@ class Reporter:
             context = {
                 "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "target_url": target,
-                "version": "0.1.0",  # TODO: Get from package metadata
+                "version": __version__,
                 "endpoints_tested": summary["endpoints_tested"],
                 "total_vulns": summary["total_vulnerabilities"],
                 "critical_count": summary["severity_breakdown"]["critical"],
@@ -418,7 +419,7 @@ class Reporter:
             context = {
                 "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "target_url": target,
-                "version": "0.1.0",  # TODO: Get from package metadata
+                "version": __version__,
                 "endpoints_tested": summary["endpoints_tested"],
                 "total_vulns": summary["total_vulnerabilities"],
                 "critical_count": summary["severity_breakdown"]["critical"],
